@@ -1,0 +1,119 @@
+---
+title: "Practicum II - Data Exploration Sandbox"
+author: "Kanad Motiwale"
+date: "Fall 2025"
+output: html_document
+---
+
+# Explore SQLite Database
+```{r setup, message=FALSE, warning=FALSE}
+# Load libraries
+library(RSQLite)
+library(DBI)
+```
+```{r connectDatabase}
+# Connect to SQLite database
+sqliteConn <- dbConnect(RSQLite::SQLite(), "data/subscribersDB.sqlitedb")
+```
+```{r listTables}
+# Step 1: List all tables
+tables <- dbListTables(sqliteConn)
+print("Tables in SQLite database:")
+print(tables)
+```
+```{r exploreAllTables}
+# Step 2: For each table, get structure and sample data
+for(table in tables) {
+  cat("\n========================================\n")
+  cat("TABLE:", table, "\n")
+  cat("========================================\n")
+  
+  # Get column info
+  cols <- dbGetQuery(sqliteConn, paste0("PRAGMA table_info(", table, ")"))
+  print(cols)
+  
+  # Get sample rows
+  cat("\nSample data:\n")
+  sample <- dbGetQuery(sqliteConn, paste0("SELECT * FROM ", table, " LIMIT 5"))
+  print(sample)
+  
+  # Get row count
+  count <- dbGetQuery(sqliteConn, paste0("SELECT COUNT(*) as count FROM ", table))
+  cat("\nTotal rows:", count$count, "\n")
+}
+```
+```{r disconnect}
+# Don't forget to disconnect
+dbDisconnect(sqliteConn)
+```
+
+```{r reconnect}
+# Reconnect for detailed exploration
+sqliteConn <- dbConnect(RSQLite::SQLite(), "data/subscribersDB.sqlitedb")
+```
+```{r exploreSubscribers}
+cat("========== SUBSCRIBERS TABLE ==========\n")
+dbGetQuery(sqliteConn, "PRAGMA table_info(subscribers)")
+dbGetQuery(sqliteConn, "SELECT * FROM subscribers LIMIT 3")
+```
+```{r exploreStreamingTxns}
+cat("========== STREAMING_TXNS TABLE ==========\n")
+dbGetQuery(sqliteConn, "PRAGMA table_info(streaming_txns)")
+dbGetQuery(sqliteConn, "SELECT * FROM streaming_txns LIMIT 3")
+```
+```{r exploreAssets}
+cat("========== ASSETS TABLE ==========\n")
+dbGetQuery(sqliteConn, "PRAGMA table_info(assets)")
+dbGetQuery(sqliteConn, "SELECT * FROM assets LIMIT 3")
+```
+```{r exploreCreators}
+cat("========== CREATORS TABLE ==========\n")
+dbGetQuery(sqliteConn, "PRAGMA table_info(creators)")
+dbGetQuery(sqliteConn, "SELECT * FROM creators LIMIT 3")
+```
+```{r explorePlans}
+cat("========== PLANS TABLE ==========\n")
+dbGetQuery(sqliteConn, "PRAGMA table_info(plans)")
+dbGetQuery(sqliteConn, "SELECT * FROM plans LIMIT 3")
+```
+```{r exploreCountries}
+cat("========== COUNTRIES TABLE ==========\n")
+dbGetQuery(sqliteConn, "PRAGMA table_info(countries)")
+dbGetQuery(sqliteConn, "SELECT * FROM countries LIMIT 5")
+```
+```{r exploreSports}
+cat("========== HOCKEY_GAMES TABLE ==========\n")
+dbGetQuery(sqliteConn, "PRAGMA table_info(hockey_games)")
+dbGetQuery(sqliteConn, "SELECT * FROM hockey_games LIMIT 3")
+
+cat("\n========== SKIING_EVENTS TABLE ==========\n")
+dbGetQuery(sqliteConn, "PRAGMA table_info(skiing_events)")
+dbGetQuery(sqliteConn, "SELECT * FROM skiing_events LIMIT 3")
+```
+```{r exploreCSV}
+cat("========== CSV FILE ==========\n")
+csv_file <- "data/new-streaming-transactions-98732.csv"
+
+if(file.exists(csv_file)) {
+  # Read first few rows
+  df_csv <- read.csv(csv_file, nrows = 10)
+  
+  cat("\nColumn names and types:\n")
+  str(df_csv)
+  
+  cat("\nFirst 5 rows:\n")
+  print(head(df_csv, 5))
+  
+  # Count total rows
+  total_rows <- length(readLines(csv_file)) - 1
+  cat("\nTotal rows in CSV:", total_rows, "\n")
+  
+} else {
+  cat("ERROR: CSV file not found!\n")
+  cat("Make sure you extracted the ZIP file to the data/ folder\n")
+}
+```
+
+```{r finalDisconnect}
+dbDisconnect(sqliteConn)
+```

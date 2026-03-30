@@ -1,0 +1,7 @@
+.Rproj.user/
+.RData
+.Rhistory
+data/
+*.zip
+*.sqlitedb
+*.csv

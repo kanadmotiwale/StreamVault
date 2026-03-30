@@ -1,0 +1,389 @@
+---
+title: "Analysis of Streaming Transactions"
+author: "Kanad Motiwale"
+term: "Fall 2025"
+output:
+  html_document:
+    toc: true
+    toc_float:
+      collapsed: true
+    toc_depth: 2
+    number_sections: true
+    theme: paper
+    highlight: tango
+  pdf_document:
+    toc: true
+    toc_depth: '2'
+subtitle: Based on Data Collected by SportsTV
+---
+
+
+```{r setup, include=FALSE}
+# Setup chunk - load libraries and connect to database
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE)
+
+# Function to install packages if not already installed
+install_if_missing <- function(packages) {
+  for (pkg in packages) {
+    if (!require(pkg, character.only = TRUE, quietly = TRUE)) {
+      install.packages(pkg, repos = "https://cran.rstudio.com/")
+      library(pkg, character.only = TRUE)
+    }
+  }
+}
+
+# Install and load required packages
+required_packages <- c("RMySQL", "DBI", "knitr", "ggplot2")
+install_if_missing(required_packages)
+
+# Load libraries
+library(RMySQL)
+library(DBI)
+library(knitr)
+library(ggplot2)
+
+# Load database configuration
+source("config.R")
+
+# Database connection
+mysqlConn <- dbConnect(
+  RMySQL::MySQL(),
+  host = DB_HOST,
+  port = DB_PORT,
+  dbname = DB_NAME,
+  user = DB_USER,
+  password = DB_PASSWORD
+)
+```
+
+# Executive Summary
+```{r executiveSummary, include=FALSE}
+# Get summary statistics using JOINs
+min_date <- dbGetQuery(mysqlConn, "
+  SELECT MIN(dd.full_date) 
+  FROM fact_streaming f
+  JOIN dim_date dd ON f.date_id = dd.date_id
+")[[1]]
+
+max_date <- dbGetQuery(mysqlConn, "
+  SELECT MAX(dd.full_date) 
+  FROM fact_streaming f
+  JOIN dim_date dd ON f.date_id = dd.date_id
+")[[1]]
+
+total_streams <- dbGetQuery(mysqlConn, "SELECT SUM(total_streams) FROM fact_streaming")[[1]]
+
+total_countries <- dbGetQuery(mysqlConn, "
+  SELECT COUNT(DISTINCT country_id) FROM fact_streaming
+")[[1]]
+
+total_sports <- dbGetQuery(mysqlConn, "
+  SELECT COUNT(DISTINCT sport_id) FROM fact_streaming
+")[[1]]
+
+# Format for display
+min_date_formatted <- format(as.Date(min_date), "%B %d, %Y")
+max_date_formatted <- format(as.Date(max_date), "%B %d, %Y")
+total_streams_formatted <- format(total_streams, big.mark = ",")
+```
+
+This report analyzes streaming transactions for SportsTV Germany, covering `r min_date_formatted` through `r max_date_formatted`. The analysis includes **`r total_streams_formatted`** total streaming events across **`r total_countries`** countries featuring **`r total_sports`** sports.
+
+**Data Quality Handling:** The ETL process filtered out transactions with NULL values in critical fields (date, sport, country, or duration). From 1.18 million raw records, 996,091 valid transactions were loaded, representing high-quality data suitable for analysis. All fact table records maintain referential integrity with zero NULL values.
+
+---
+
+# Growth of Streaming Transactions Over Time
+
+## Analysis by Sport
+
+This section examines the growth trends in streaming activity across different sports over all available years.
+```{r growthBySport}
+# Query with JOINs to dimension tables
+sql <- "
+SELECT 
+    dd.year,
+    ds.sport_name as sport,
+    SUM(f.total_streams) as total_streaming_events,
+    SUM(f.total_minutes_streamed) as total_streaming_minutes
+FROM fact_streaming f
+INNER JOIN dim_date dd ON f.date_id = dd.date_id
+INNER JOIN dim_sport ds ON f.sport_id = ds.sport_id
+GROUP BY dd.year, ds.sport_name
+ORDER BY dd.year, ds.sport_name
+"
+
+df_growth <- dbGetQuery(mysqlConn, sql)
+
+# Display table
+kable(df_growth, 
+      col.names = c("Year", "Sport", "Total Streaming Events", "Total Streaming Minutes"),
+      format.args = list(big.mark = ","),
+      caption = "Table 1: Streaming Activity by Year and Sport")
+```
+```{r growthChart, fig.width=10, fig.height=6}
+# Create line chart for streaming events
+ggplot(df_growth, aes(x = year, y = total_streaming_events, color = sport, group = sport)) +
+  geom_line(size = 1.2) +
+  geom_point(size = 3) +
+  labs(
+    title = "Growth of Streaming Events by Sport",
+    subtitle = "Total number of streaming events per year",
+    x = "Year",
+    y = "Number of Streaming Events",
+    color = "Sport"
+  ) +
+  scale_y_continuous(labels = scales::comma) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(size = 16, face = "bold"),
+    plot.subtitle = element_text(size = 12),
+    legend.position = "bottom"
+  )
+```
+```{r growthChartMinutes, fig.width=10, fig.height=6}
+# Create line chart for streaming minutes
+ggplot(df_growth, aes(x = year, y = total_streaming_minutes, color = sport, group = sport)) +
+  geom_line(size = 1.2) +
+  geom_point(size = 3) +
+  labs(
+    title = "Growth of Streaming Time by Sport",
+    subtitle = "Total minutes streamed per year",
+    x = "Year",
+    y = "Total Streaming Minutes",
+    color = "Sport"
+  ) +
+  scale_y_continuous(labels = scales::comma) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(size = 16, face = "bold"),
+    plot.subtitle = element_text(size = 12),
+    legend.position = "bottom"
+  )
+```
+
+### Key Findings
+```{r growthInsights}
+# Calculate year-over-year growth
+most_recent_year <- max(df_growth$year)
+previous_year <- most_recent_year - 1
+
+current_total <- sum(df_growth[df_growth$year == most_recent_year, "total_streaming_events"])
+previous_total <- sum(df_growth[df_growth$year == previous_year, "total_streaming_events"])
+
+growth_pct <- round(((current_total - previous_total) / previous_total) * 100, 1)
+
+# Most popular sport
+sport_totals <- aggregate(total_streaming_events ~ sport, data = df_growth, sum)
+most_popular_sport <- sport_totals[which.max(sport_totals$total_streaming_events), "sport"]
+```
+
+- Streaming events grew by **`r growth_pct`%** from `r previous_year` to `r most_recent_year`
+- **`r most_popular_sport`** is the most streamed sport with **`r format(max(sport_totals$total_streaming_events), big.mark=",")`** total streaming events across all years
+
+---
+
+# Weekly Streaming Patterns
+
+## Most Recent Year Analysis
+
+This section examines weekly streaming patterns for the most recent year of data.
+```{r weeklyPatterns}
+# Get most recent year
+recent_year <- dbGetQuery(mysqlConn, "
+  SELECT MAX(dd.year) as max_year 
+  FROM fact_streaming f
+  JOIN dim_date dd ON f.date_id = dd.date_id
+")$max_year
+
+# Query with JOIN
+sql <- paste0("
+SELECT 
+    dd.week,
+    SUM(f.total_streams) as streaming_events
+FROM fact_streaming f
+INNER JOIN dim_date dd ON f.date_id = dd.date_id
+WHERE dd.year = ", recent_year, "
+GROUP BY dd.week
+ORDER BY dd.week
+")
+
+df_weekly <- dbGetQuery(mysqlConn, sql)
+
+# Display table
+kable(df_weekly, 
+      col.names = c("Week Number", "Total Streaming Events"),
+      format.args = list(big.mark = ","),
+      caption = paste0("Table 2: Weekly Streaming Events in ", recent_year))
+```
+```{r weeklyChart, fig.width=10, fig.height=6}
+# Create bar chart
+ggplot(df_weekly, aes(x = week, y = streaming_events)) +
+  geom_col(fill = "steelblue") +
+  labs(
+    title = paste0("Weekly Streaming Events in ", recent_year),
+    subtitle = "Number of streaming events per week",
+    x = "Week Number",
+    y = "Streaming Events"
+  ) +
+  scale_y_continuous(labels = scales::comma) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(size = 16, face = "bold"),
+    plot.subtitle = element_text(size = 12)
+  )
+```
+
+### Weekly Statistics
+```{r weeklyStats}
+avg_weekly <- round(mean(df_weekly$streaming_events), 0)
+max_week <- df_weekly[which.max(df_weekly$streaming_events), "week"]
+max_events <- max(df_weekly$streaming_events)
+min_week <- df_weekly[which.min(df_weekly$streaming_events), "week"]
+min_events <- min(df_weekly$streaming_events)
+```
+
+- Average weekly streaming events: **`r format(avg_weekly, big.mark=",")`**
+- Peak week: Week **`r max_week`** with **`r format(max_events, big.mark=",")`** events
+- Lowest week: Week **`r min_week`** with **`r format(min_events, big.mark=",")`** events
+
+---
+
+# Streaming Analytics by Sport and Country
+
+## Average Streaming Time and Total Streams
+```{r sportCountryAnalysis}
+# Query with JOINs
+sql <- "
+SELECT 
+    ds.sport_name as sport,
+    dc.country_name as country,
+    SUM(f.total_streams) as total_streams,
+    ROUND(AVG(f.avg_minutes_per_stream), 2) as avg_streaming_minutes
+FROM fact_streaming f
+INNER JOIN dim_sport ds ON f.sport_id = ds.sport_id
+INNER JOIN dim_country dc ON f.country_id = dc.country_id
+GROUP BY ds.sport_name, dc.country_name
+ORDER BY ds.sport_name, dc.country_name
+"
+
+df_sport_country <- dbGetQuery(mysqlConn, sql)
+
+# Display table
+kable(df_sport_country, 
+      col.names = c("Sport", "Country", "Total Streams", "Avg Minutes per Stream"),
+      format.args = list(big.mark = ","),
+      caption = "Table 3: Streaming Metrics by Sport and Country")
+```
+```{r sportCountryChart, fig.width=12, fig.height=6}
+# Create grouped bar chart
+ggplot(df_sport_country, aes(x = sport, y = total_streams, fill = country)) +
+  geom_col(position = "dodge") +
+  labs(
+    title = "Total Streaming Events by Sport and Country",
+    subtitle = "Comparison across all countries",
+    x = "Sport",
+    y = "Total Streaming Events",
+    fill = "Country"
+  ) +
+  scale_y_continuous(labels = scales::comma) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(size = 16, face = "bold"),
+    plot.subtitle = element_text(size = 12),
+    legend.position = "bottom",
+    axis.text.x = element_text(angle = 0, hjust = 0.5)
+  )
+```
+
+---
+
+# Day of Week Analysis
+
+## Peak Streaming Days by Sport and Country
+
+This analysis identifies which day of the week has the highest streaming activity (by total minutes) over the past three years.
+```{r dayOfWeekAnalysis}
+# Get last 3 years
+current_year <- dbGetQuery(mysqlConn, "
+  SELECT MAX(dd.year) 
+  FROM fact_streaming f
+  JOIN dim_date dd ON f.date_id = dd.date_id
+")[[1]]
+
+three_years_ago <- current_year - 2
+
+# Query with JOINs
+sql <- paste0("
+SELECT 
+    ds.sport_name as sport,
+    dc.country_name as country,
+    dd.day_of_week,
+    dd.day_name,
+    SUM(f.total_minutes_streamed) as total_minutes
+FROM fact_streaming f
+INNER JOIN dim_date dd ON f.date_id = dd.date_id
+INNER JOIN dim_sport ds ON f.sport_id = ds.sport_id
+INNER JOIN dim_country dc ON f.country_id = dc.country_id
+WHERE dd.year >= ", three_years_ago, "
+GROUP BY ds.sport_name, dc.country_name, dd.day_of_week, dd.day_name
+ORDER BY ds.sport_name, dc.country_name, total_minutes DESC
+")
+
+df_dow <- dbGetQuery(mysqlConn, sql)
+
+# Find peak day for each sport-country combination
+df_peak <- do.call(rbind, lapply(split(df_dow, list(df_dow$sport, df_dow$country)), function(x) {
+  x[which.max(x$total_minutes), ]
+}))
+
+# Display table
+kable(df_peak[, c("sport", "country", "day_name", "total_minutes")], 
+      col.names = c("Sport", "Country", "Peak Day", "Total Minutes Streamed"),
+      format.args = list(big.mark = ","),
+      row.names = FALSE,
+      caption = paste0("Table 4: Peak Streaming Day by Sport and Country (", three_years_ago, "-", current_year, ")"))
+```
+```{r dowChart, fig.width=12, fig.height=8}
+# Create heatmap
+ggplot(df_dow, aes(x = day_name, y = paste(sport, "-", country), fill = total_minutes)) +
+  geom_tile(color = "white") +
+  scale_fill_gradient(low = "lightblue", high = "darkblue", labels = scales::comma) +
+  labs(
+    title = "Streaming Activity by Day of Week",
+    subtitle = paste0("Total minutes streamed (", three_years_ago, "-", current_year, ")"),
+    x = "Day of Week",
+    y = "Sport - Country",
+    fill = "Total Minutes"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(size = 16, face = "bold"),
+    plot.subtitle = element_text(size = 12),
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    legend.position = "right"
+  )
+```
+
+---
+
+# Conclusion
+```{r conclusion}
+total_streams <- format(dbGetQuery(mysqlConn, "SELECT SUM(total_streams) FROM fact_streaming")[[1]], big.mark=",")
+total_minutes <- format(dbGetQuery(mysqlConn, "SELECT SUM(total_minutes_streamed) FROM fact_streaming")[[1]], big.mark=",")
+avg_per_stream <- round(dbGetQuery(mysqlConn, "SELECT AVG(avg_minutes_per_stream) FROM fact_streaming")[[1]], 1)
+```
+
+This analysis of SportsTV's streaming data reveals:
+
+- **Total Streaming Events:** `r total_streams`
+- **Total Streaming Minutes:** `r total_minutes`
+- **Average Minutes per Stream:** `r avg_per_stream` minutes
+
+The data demonstrates consistent growth in streaming activity across all sports, with distinct patterns by geography and day of week. These insights can inform content acquisition strategies, marketing campaigns, and infrastructure planning.
+```{r cleanup, include=FALSE}
+# Disconnect from database
+dbDisconnect(mysqlConn)
+```
+
+---
